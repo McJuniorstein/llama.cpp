@@ -1673,17 +1673,17 @@ bool llama_model_loader::load_all_data(
 
     // check if this is the last call and do final cleanup
     if (size_done >= size_data) {
+        // pin the pages backing the weights kept in system memory for faster H2D copies
+        bool (*reg_fn)(void *, size_t) = nullptr;
+        void (*unreg_fn)(void *) = nullptr;
+        for (size_t i = 0; i < ggml_backend_dev_count() && !reg_fn; i++) {
+            ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(ggml_backend_dev_get(i));
+            reg_fn   = (bool (*)(void *, size_t)) ggml_backend_reg_get_proc_address(reg, "ggml_backend_register_host_buffer");
+            unreg_fn = (void (*)(void *))         ggml_backend_reg_get_proc_address(reg, "ggml_backend_unregister_host_buffer");
+        }
+
         // unmap offloaded tensors and metadata
         if (use_mmap) {
-            // pin the pages backing the weights kept in system memory for faster H2D copies
-            bool (*reg_fn)(void *, size_t) = nullptr;
-            void (*unreg_fn)(void *) = nullptr;
-            for (size_t i = 0; i < ggml_backend_dev_count() && !reg_fn; i++) {
-                ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(ggml_backend_dev_get(i));
-                reg_fn   = (bool (*)(void *, size_t)) ggml_backend_reg_get_proc_address(reg, "ggml_backend_register_host_buffer");
-                unreg_fn = (void (*)(void *))         ggml_backend_reg_get_proc_address(reg, "ggml_backend_unregister_host_buffer");
-            }
-
             for (uint32_t idx = 0; idx < mappings.size(); idx++) {
                 const auto & mmap_used = mmaps_used.at(idx);
                 auto & mapping = mappings.at(idx);
@@ -1697,6 +1697,24 @@ bool llama_model_loader::load_all_data(
                         LLAMA_LOG_INFO("%s: pinned %.2f MiB of mapped model memory for faster H2D transfers\n",
                                 __func__, n_registered / 1024.0 / 1024.0);
                     }
+                }
+            }
+        } else if (reg_fn) {
+            // without mmap the weights kept in system memory live in malloc-backed host buffers,
+            // pin those instead (registration outlives the buffers; they are process-lifetime here)
+            std::vector<ggml_backend_buffer_t> seen;
+            for (const auto & it : bufs) {
+                ggml_backend_buffer_t buf = it.second;
+                if (buf == nullptr || !ggml_backend_buffer_is_host(buf) ||
+                    std::find(seen.begin(), seen.end(), buf) != seen.end()) {
+                    continue;
+                }
+                seen.push_back(buf);
+                void * base = ggml_backend_buffer_get_base(buf);
+                size_t size = ggml_backend_buffer_get_size(buf);
+                if (base != nullptr && size > 0 && reg_fn(base, size)) {
+                    LLAMA_LOG_INFO("%s: pinned %.2f MiB of model memory for faster H2D transfers\n",
+                            __func__, size / 1024.0 / 1024.0);
                 }
             }
         }
