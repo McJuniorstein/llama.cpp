@@ -1,5 +1,12 @@
 # llama.cpp
 
+> [!NOTE]
+> **This fork branch (`fleet/moe-offload`) carries verified patches + tuning results for
+> MoE models with experts offloaded to system RAM (`--n-cpu-moe`) on consumer GPUs.**
+> Includes independent verification of the patches from
+> [thecodacus/llama.cpp](https://github.com/thecodacus/llama.cpp) — what reproduced,
+> what didn't, and why. **Read [MOE_OFFLOAD_TUNING.md](MOE_OFFLOAD_TUNING.md).**
+
 ![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
