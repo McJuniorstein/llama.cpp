@@ -201,6 +201,9 @@ struct llama_model_loader {
             llama_progress_callback progress_callback,
             void * progress_callback_user_data);
 
+    // host weight buffers collected across load_all_data calls, pinned on the final call
+    std::vector<ggml_backend_buffer_t> host_bufs_to_pin;
+
     std::string ftype_name() const;
 
     void print_info() const;

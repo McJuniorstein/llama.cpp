@@ -1424,6 +1424,18 @@ bool llama_model_loader::load_all_data(
     }
     GGML_ASSERT(size_data != 0 && "call init_mappings() first");
 
+    // load_all_data is called once per context; remember the host weight buffers seen in
+    // each call so the final call can pin them all
+    if (!use_mmap) {
+        for (const auto & it : bufs) {
+            ggml_backend_buffer_t buf = it.second;
+            if (buf != nullptr && ggml_backend_buffer_is_host(buf) &&
+                std::find(host_bufs_to_pin.begin(), host_bufs_to_pin.end(), buf) == host_bufs_to_pin.end()) {
+                host_bufs_to_pin.push_back(buf);
+            }
+        }
+    }
+
     std::vector<no_init<uint8_t>> read_buf;
     std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 
@@ -1702,14 +1714,7 @@ bool llama_model_loader::load_all_data(
         } else if (reg_fn) {
             // without mmap the weights kept in system memory live in malloc-backed host buffers,
             // pin those instead (registration outlives the buffers; they are process-lifetime here)
-            std::vector<ggml_backend_buffer_t> seen;
-            for (const auto & it : bufs) {
-                ggml_backend_buffer_t buf = it.second;
-                if (buf == nullptr || !ggml_backend_buffer_is_host(buf) ||
-                    std::find(seen.begin(), seen.end(), buf) != seen.end()) {
-                    continue;
-                }
-                seen.push_back(buf);
+            for (ggml_backend_buffer_t buf : host_bufs_to_pin) {
                 void * base = ggml_backend_buffer_get_base(buf);
                 size_t size = ggml_backend_buffer_get_size(buf);
                 if (base != nullptr && size > 0 && reg_fn(base, size)) {
