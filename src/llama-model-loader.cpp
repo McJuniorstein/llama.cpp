@@ -1715,6 +1715,10 @@ bool llama_model_loader::load_all_data(
             // without mmap the weights kept in system memory live in malloc-backed host buffers,
             // pin those instead (registration outlives the buffers; they are process-lifetime here)
             for (ggml_backend_buffer_t buf : host_bufs_to_pin) {
+                // buffers from device host buffer types (e.g. CUDA_Host) are already pinned
+                if (ggml_backend_buffer_get_type(buf) != ggml_backend_cpu_buffer_type()) {
+                    continue;
+                }
                 void * base = ggml_backend_buffer_get_base(buf);
                 size_t size = ggml_backend_buffer_get_size(buf);
                 if (base != nullptr && size > 0 && reg_fn(base, size)) {
