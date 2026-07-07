@@ -58,6 +58,45 @@ Notes:
   as-shipped env vars were **-4% to +4%**. Most of the video's gain corresponds to what
   mainline `--no-mmap` already does; see next section.
 
+## Round 2: `-ub` is the biggest lever, and it multiplies the prefetch patch
+
+Two findings from continued tuning that dwarf everything above:
+
+**1. Offloaded-MoE prefill scales almost linearly with ubatch.** The same expert bytes
+stream over PCIe per pass regardless of batch size, so doubling `-ub` roughly doubles
+prefill throughput. Machine B, `-ncmoe 24`, pp4096:
+
+| -ub | 512 | 1024 | 2048 | 4096 |
+|---|---|---|---|---|
+| prefill t/s | 725 | 1396 | 2575 | **4309** |
+
+Compute buffers grow with ubatch — on a 16GB card, ub 8192 only fits at full expert
+offload (`-ncmoe 99`), where it reached **5286 t/s** (pp8192).
+
+**2. The prefetch patch and big ubatch are synergistic, not additive.** At ub 2048 the
+prefetch overlap is worth +4–8%. At ub 8192 (machine B, ncmoe 99, pp8192):
+prefetch OFF = 3302 t/s, prefetch ON = **5286 t/s (+60%)**. Larger batches mean more
+compute per layer to hide under the copies. Use them together.
+
+**VRAM is a dial, not a setting:** spend it on ubatch buffers (prefill) or on resident
+expert layers (decode). Decode doesn't care about ubatch; prefill barely cares about
+resident layers once ubatch is large. Tune per workload.
+
+## Bonus: gpt-oss-120b on a 24GB RTX 3090 (128GB DDR4 host)
+
+Same recipe applied to a model ~2.5× bigger than VRAM (MXFP4, 59GiB), machine A:
+
+| -ncmoe | -ub | prefill t/s | decode t/s | VRAM |
+|---|---|---|---|---|
+| 99 (all experts in RAM) | 8192 | 1362 | 16.1 | ~7G |
+| 30 | 4096 | 855 | 18.9 | — |
+| **30** | **8192** | **1506** | **19.1** | 15.5G |
+| 26 | 8192 | — | 21.8 | 22.0G |
+
+A 117B-parameter MoE at 1500 t/s prefill / 19–22 t/s decode on a single consumer GPU.
+For chat-heavy use, more resident layers (`-ncmoe 26`); for RAG/long-context, keep
+VRAM headroom and max ubatch.
+
 ## Why the pinning patch probably does nothing on your machine
 
 The `GGML_CUDA_REGISTER_HOST` patch pins mmap'd model pages with `cudaHostRegister` so
